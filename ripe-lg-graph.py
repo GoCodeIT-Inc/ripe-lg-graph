@@ -152,8 +152,11 @@ def get_rrc_data(address_prefix:str, rrc_list:typing.Union[str, typing.List[str]
 
 def query_asn_info(asn:str) -> str:
     try:
-        data = dns.resolver.query(f"AS{asn}.asn.cymru.com", "TXT").response.answer[0][-1].to_text().replace("'","").replace('"','')
-    except:
+        data = dns.resolver.query(f"AS{asn}.asn.cymru.com", "TXT")
+        data = data.response
+        data = data.answer[0][0]
+        data = data.to_text().replace("'","").replace('"','')
+    except Exception as e:
         return " "*5
     return [ field.strip() for field in data.split("|") ]
 
@@ -166,6 +169,7 @@ def get_as_name(_as:str) -> str:
         return _as.strip()
 
     name = query_asn_info(_as)[-1].replace(" ","\r",1)
+    # print(name)
     return f"AS{_as} | {name}"
 
 
@@ -227,34 +231,38 @@ def make_bgpmap(rrc:str, rrc_data_dict:typing.Dict[str, typing.Union[str, typing
     previous_as = None
     first = True
 
+    big_node_minpeers = min(len(rrc_data_dict["paths"])/4,10)
+    peercount = {}
+    unique_peercomps = set()
+
     for asmap in rrc_data_dict["paths"]:
         previous_as = rrc_full
         color = "#%x" % random.randint(0, 16777215)
-
-        hop = False
         hop_label = ""
 
         for _as in asmap.split(" "):
 
-            if not hop:
-                hop = True
-                hop_label = _as
-                if first:
-                    hop_label = hop_label + "*"
-
             if (_as == asmap[-1]):
                 add_node(_as, fillcolor="#F5A9A9", shape="box")
+            elif (_as in peercount and peercount[_as] > big_node_minpeers):
+                add_node(_as, fillcolor="#00FFFF", shape="cylinder")
+                nodes[_as].set_fillcolor("#00FFFF")
+                nodes[_as].set_shape("cylinder")
             else:
-                add_node(_as, fillcolor=(first and "#F5A9A9" or "white"))
-
-            if hop_label:
-                edge = add_edge(nodes[previous_as], nodes[_as], label=hop_label, fontsize="7")
-            else:
-                edge = add_edge(nodes[previous_as], nodes[_as], fontsize="7")
+                add_node(_as, fillcolor="white")
+            
+            peercomp = f"{previous_as}|{_as}"
+            if peercomp not in unique_peercomps:
+                peercount[_as] = (peercount[_as] if _as in peercount else 0)+1
+                unique_peercomps.add(peercomp)
+            edge = add_edge(nodes[previous_as], nodes[_as], fontsize="7")
 
             hop_label = ""
 
-            if (first or _as == asmap[-1]):
+            if (previous_as in peercount and peercount[previous_as] > big_node_minpeers):
+                edge.set_style("bold")
+                edge.set_color("#00ffff")
+            elif _as == asmap[-1]:
                 edge.set_style("bold")
                 edge.set_color("red")
             elif edge.get_style() != "bold":
@@ -303,9 +311,12 @@ if __name__ == "__main__":
         os.makedirs(f"./output/{target_folder}/png")
         os.makedirs(f"./output/{target_folder}/svg")
 
+        totaldict = {'paths':[],'location':""}
         for rrc, rrc_data_dict in rrc_path_data.items():
+            totaldict['paths'] += rrc_data_dict['paths']
             make_bgpmap(rrc, rrc_data_dict)
 
+        make_bgpmap("ALL", totaldict)
         print("\nDone!")
     else:
         raise AddressOrPrefixNotFoundError("Entered address or prefix is invalid.")
